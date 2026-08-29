@@ -332,6 +332,7 @@ function render(){
       <h1>📚 HSK 단어장</h1>
       <span class="count">단어 ${state.words.length}개 · 오답 ${state.wrongIds.length}개</span>
     </header>
+    ${firebaseError ? `<div class="card" style="border-color:var(--wrong);margin-bottom:14px"><p class="desc" style="margin:0;color:var(--wrong)">⚠️ ${firebaseError}<br><span class="tiny">Firestore 보안 규칙에서 hsk_vocab_app 컬렉션 읽기/쓰기가 허용되어 있는지 확인해주세요.</span></p></div>` : ''}
     <nav id="nav"></nav>
     <div id="screen"></div>
   `;
@@ -373,7 +374,6 @@ function goTo(key){
 /* ---------- 홈 ---------- */
 function renderHome(){
   return `
-    ${firebaseError ? `<div class="card" style="border-color:var(--wrong)"><p class="desc" style="margin:0;color:var(--wrong)">${firebaseError}<br><span class="tiny">Firestore 보안 규칙에서 hsk_vocab_app 컬렉션 읽기/쓰기가 허용되어 있는지 확인해주세요.</span></p></div>` : ''}
     <div class="card">
       <h2>사용 순서</h2>
       <p class="desc">
