@@ -164,7 +164,7 @@ let firebaseError = '';
 /* ============ 저장소 ============ */
 
 let state = {
-  screen: 'home',
+  screen: 'flash',
   words: [],
   wrongIds: [],
   nextId: 1,
@@ -300,6 +300,7 @@ function importParsedWords(parsed){
       pinyin: p.pinyin,
       meaning: p.meaning,
       level: p.level || null,
+      important: false,
     });
     added++;
   }
@@ -324,13 +325,18 @@ function stripTones(py){
   return py.toLowerCase().split('').map(c=>map[c]||c).join('').replace(/[^a-z]/g,'');
 }
 function comparePinyin(input, correct){
-  const inClean = input.trim().toLowerCase().replace(/\s+/g,'');
-  const corClean = correct.trim().toLowerCase().replace(/\s+/g,'');
-  if(inClean === corClean) return 'right';
-  if(stripTones(inClean) === stripTones(corClean)) return 'warn';
-  return 'wrong';
+  const inClean = stripTones(input.trim().toLowerCase().replace(/\s+/g,''));
+  const corClean = stripTones(correct.trim().toLowerCase().replace(/\s+/g,''));
+  return inClean === corClean ? 'right' : 'wrong';
 }
 function findWordById(id){ return state.words.find(w=>w.id===id); }
+function toggleImportant(id){
+  const w = findWordById(id);
+  if(!w) return;
+  w.important = !w.important;
+  saveWords();
+  render();
+}
 function numberOf(id){
   const idx = state.words.findIndex(w=>w.id===id);
   return idx===-1 ? null : idx+1;
@@ -359,7 +365,7 @@ function render(){
   root.innerHTML = `
     <header>
       <h1>📚 HSK 단어장</h1>
-      <span class="count">단어 ${state.words.length}개 · 오답 ${state.wrongIds.length}개</span>
+      <span class="count">단어 ${state.words.length}개 · 오답 ${state.wrongIds.length}개 · ⭐ 중요 ${state.words.filter(w=>w.important).length}개</span>
     </header>
     ${firebaseError ? `<div class="card" style="border-color:var(--wrong);margin-bottom:14px"><p class="desc" style="margin:0;color:var(--wrong)">⚠️ ${firebaseError}<br><span class="tiny">Firestore 보안 규칙에서 hsk_vocab_app 컬렉션 읽기/쓰기가 허용되어 있는지 확인해주세요.</span></p></div>` : ''}
     <nav id="nav"></nav>
@@ -367,12 +373,12 @@ function render(){
   `;
   const nav = document.getElementById('nav');
   const tabs = [
-    ['home','홈'],
-    ['import','단어 가져오기'],
-    ['manage','단어장 관리'],
     ['flash','플래시카드'],
     ['quiz','시험보기'],
     ['wrong','오답노트'],
+    ['home','홈'],
+    ['import','단어 가져오기'],
+    ['manage','단어장 관리'],
   ];
   tabs.forEach(([key,label])=>{
     const b = document.createElement('button');
@@ -455,6 +461,7 @@ function renderImport(){
 function renderManage(){
   const rows = state.words.map(w=>`
     <tr data-id="${w.id}">
+      <td><button class="toggle-star" data-id="${w.id}" style="background:none;border:none;font-size:16px;cursor:pointer">${w.important?'⭐':'☆'}</button></td>
       <td><input type="text" class="edit-hanzi" value="${escapeAttr(w.hanzi)}" style="width:70px"></td>
       <td><input type="text" class="edit-pinyin" value="${escapeAttr(w.pinyin)}" style="width:90px"></td>
       <td><input type="text" class="edit-meaning" value="${escapeAttr(w.meaning)}" style="width:100%"></td>
@@ -488,7 +495,7 @@ function renderManage(){
       ${state.words.length===0 ? `<div class="empty">등록된 단어가 없습니다. '단어 가져오기'에서 먼저 추가해 주세요.</div>` : `
       <div style="overflow-x:auto">
       <table>
-        <tr><th>한자</th><th>병음</th><th>뜻</th><th></th></tr>
+        <tr><th></th><th>한자</th><th>병음</th><th>뜻</th><th></th></tr>
         ${rows}
       </table>
       </div>
@@ -539,7 +546,8 @@ function renderFlash(){
         <span class="progress">${numberOf(id)}번 · ${state.fcIndex+1} / ${state.fcOrder.length}</span>
       </div>
       <div class="flash-stage">
-        <div class="flash-card" id="flashCard">
+        <div class="flash-card" id="flashCard" style="position:relative">
+          <button id="fcStar" data-id="${w.id}" style="position:absolute;top:10px;right:10px;background:none;border:none;font-size:22px;cursor:pointer;line-height:1">${w.important?'⭐':'☆'}</button>
           ${state.fcFlipped ? `
             <div class="flash-hanzi" style="font-size:34px">${w.hanzi}</div>
             <div class="flash-pinyin">${w.pinyin}</div>
@@ -636,8 +644,7 @@ function renderQuiz(){
   }
   const pyResult = state.quizPinyinResult;
   const pyMsgMap = {
-    right: `정확해요! 정답: <b>${w.pinyin}</b>`,
-    warn: `성조만 다르거나 비슷해요. 정답: <b>${w.pinyin}</b>`,
+    right: `정답이에요! (성조는 채점하지 않아요) 정답 표기: <b>${w.pinyin}</b>`,
     wrong: `다시 확인해보세요. 정답: <b>${w.pinyin}</b>`,
   };
   return `
@@ -646,12 +653,15 @@ function renderQuiz(){
         <span class="tiny">${state.quizMode==='wrong'?'오답 복습':state.quizMode==='range'?('범위 시험 '+state.quizRangeLabel):'전체 시험'}</span>
         <span class="progress">${state.quizIndex+1} / ${state.quizTotal} · 맞음 ${state.quizScoreRight}</span>
       </div>
-      <div class="quiz-hanzi">${w.hanzi}</div>
+      <div class="row between" style="align-items:flex-start">
+        <div class="quiz-hanzi" style="margin:10px 0 0;flex:1">${w.hanzi}</div>
+        <button id="quizStar" data-id="${w.id}" style="background:none;border:none;font-size:26px;cursor:pointer;padding:10px 0 0">${w.important?'⭐':'☆'}</button>
+      </div>
       ${w.level?`<div class="quiz-level">HSK ${w.level}급</div>`:'<div style="margin-bottom:10px"></div>'}
 
       <div class="quiz-section">
         <div class="quiz-label">① 병음을 입력하세요</div>
-        <input type="text" id="pinyinInput" placeholder="예: nǐ hǎo" value="${escapeAttr(state.quizPinyinInput)}" ${state.quizPinyinChecked?'disabled':''}>
+        <input type="text" id="pinyinInput" placeholder="예: ni hao (성조 없이 입력해도 돼요)" value="${escapeAttr(state.quizPinyinInput)}" ${state.quizPinyinChecked?'disabled':''}>
         ${!state.quizPinyinChecked ? `<div class="row" style="margin-top:8px"><button class="btn secondary" id="checkPinyin" style="padding:8px 14px;font-size:13px">확인</button></div>` : ''}
         ${pyResult ? `<div class="pinyin-feedback ${pyResult}">${pyMsgMap[pyResult]}</div>` : ''}
       </div>
@@ -691,7 +701,7 @@ function renderWrong(){
     return `
       <div class="wrong-item">
         <div class="wrong-hanzi">${w.hanzi}</div>
-        <div class="wrong-meta"><span class="py">${w.pinyin}</span><br><span class="mn">${w.meaning}</span></div>
+        <div class="wrong-meta"><span class="py">${w.pinyin}</span> ${w.important?'⭐':''}<br><span class="mn">${w.meaning}</span></div>
         <button class="btn ghost remove-wrong" data-id="${w.id}" style="padding:4px 8px;font-size:12px">제거</button>
       </div>
     `;
@@ -744,7 +754,7 @@ function attachHandlers(){
     const m = document.getElementById('addMeaning').value.trim();
     if(!h || !p || !m){ state.addWordError = '한자, 병음, 뜻을 모두 입력해주세요.'; render(); return; }
     state.addWordError = '';
-    state.words.push({id:state.nextId++, hanzi:h, pinyin:p, meaning:m, level:null});
+    state.words.push({id:state.nextId++, hanzi:h, pinyin:p, meaning:m, level:null, important:false});
     saveWords(); saveNextId();
     render();
   };
@@ -763,6 +773,9 @@ function attachHandlers(){
     render();
     setTimeout(()=>{ state.saveMessage=''; render(); }, 2000);
   };
+  document.querySelectorAll('.toggle-star').forEach(btn=>{
+    btn.onclick = ()=> toggleImportant(Number(btn.getAttribute('data-id')));
+  });
   document.querySelectorAll('.delete-word').forEach(btn=>{
     btn.onclick = (e)=>{
       const tr = e.target.closest('tr');
@@ -810,6 +823,8 @@ function attachHandlers(){
   };
   const fcCard = document.getElementById('flashCard');
   if(fcCard) fcCard.onclick = ()=>{ state.fcFlipped = !state.fcFlipped; render(); };
+  const fcStar = document.getElementById('fcStar');
+  if(fcStar) fcStar.onclick = (e)=>{ e.stopPropagation(); toggleImportant(Number(fcStar.getAttribute('data-id'))); };
   const fcFlip = document.getElementById('fcFlip');
   if(fcFlip) fcFlip.onclick = ()=>{ state.fcFlipped = !state.fcFlipped; render(); };
   const fcPrev = document.getElementById('fcPrev');
@@ -855,6 +870,8 @@ function attachHandlers(){
 
   const pinyinInput = document.getElementById('pinyinInput');
   if(pinyinInput) pinyinInput.oninput = (e)=>{ state.quizPinyinInput = e.target.value; };
+  const quizStar = document.getElementById('quizStar');
+  if(quizStar) quizStar.onclick = ()=>{ toggleImportant(Number(quizStar.getAttribute('data-id'))); };
   const checkPinyin = document.getElementById('checkPinyin');
   if(checkPinyin) checkPinyin.onclick = ()=>{
     const id = state.quizPool[state.quizIndex];
