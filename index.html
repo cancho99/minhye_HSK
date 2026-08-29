@@ -193,6 +193,13 @@ let state = {
   confirmingClear: false,
   addWordError: '',
   saveMessage: '',
+  // progress
+  progress: { flashLast: 0 },
+  flashRangeStart: 1,
+  flashRangeEnd: null,
+  quizRangeStart: 1,
+  quizRangeEnd: null,
+  quizRangeLabel: '',
 };
 
 async function loadAll(){
@@ -203,18 +210,25 @@ async function loadAll(){
       state.words = Array.isArray(data.words) ? data.words : [];
       state.wrongIds = Array.isArray(data.wrongIds) ? data.wrongIds : [];
       state.nextId = typeof data.nextId === 'number' ? data.nextId : 1;
+      state.progress = data.progress && typeof data.progress === 'object' ? data.progress : { flashLast: 0 };
     } else {
       state.words = [];
       state.wrongIds = [];
       state.nextId = 1;
+      state.progress = { flashLast: 0 };
     }
     firebaseError = '';
   }catch(e){
     state.words = [];
     state.wrongIds = [];
     state.nextId = 1;
+    state.progress = { flashLast: 0 };
     firebaseError = 'Firebase 연결 오류: ' + (e && e.message ? e.message : e);
   }
+  state.flashRangeStart = 1;
+  state.flashRangeEnd = state.words.length;
+  state.quizRangeStart = 1;
+  state.quizRangeEnd = state.words.length;
   state.loaded = true;
   render();
 }
@@ -229,6 +243,10 @@ async function saveWrong(){
 }
 async function saveNextId(){
   try{ await docRef.set({nextId: state.nextId}, {merge:true}); firebaseError=''; }
+  catch(e){ firebaseError = '저장 실패: ' + (e && e.message ? e.message : e); render(); }
+}
+async function saveProgress(){
+  try{ await docRef.set({progress: state.progress}, {merge:true}); firebaseError=''; }
   catch(e){ firebaseError = '저장 실패: ' + (e && e.message ? e.message : e); render(); }
 }
 
@@ -313,6 +331,17 @@ function comparePinyin(input, correct){
   return 'wrong';
 }
 function findWordById(id){ return state.words.find(w=>w.id===id); }
+function numberOf(id){
+  const idx = state.words.findIndex(w=>w.id===id);
+  return idx===-1 ? null : idx+1;
+}
+function markStudied(id){
+  const num = numberOf(id);
+  if(num && num > (state.progress.flashLast||0)){
+    state.progress.flashLast = num;
+    saveProgress();
+  }
+}
 
 /* ============ 렌더링 ============ */
 function el(html){
@@ -373,8 +402,17 @@ function goTo(key){
 
 /* ---------- 홈 ---------- */
 function renderHome(){
+  const total = state.words.length;
+  const last = state.progress.flashLast||0;
   return `
     <div class="card">
+      ${total>0 ? `
+        <div class="row between" style="margin-bottom:10px">
+          <span class="tiny">플래시카드 진도</span>
+          <span class="score-badge">${last} / ${total}번까지 학습</span>
+        </div>
+        ${last>0 && last<total ? `<button class="btn secondary" id="continueStudy" style="margin-bottom:14px">이어서 학습하기 (${last+1}번부터)</button>` : ''}
+      ` : ''}
       <h2>사용 순서</h2>
       <p class="desc">
         1) <b>단어 가져오기</b>에서 갖고 있는 단어 목록(한자·병음·뜻)을 붙여넣어 단어장을 만드세요.<br>
@@ -466,8 +504,14 @@ function escapeAttr(s){ return (s||'').replace(/"/g,'&quot;'); }
 
 /* ---------- 플래시카드 ---------- */
 function setupFlash(){
-  const order = state.words.map(w=>w.id);
-  state.fcOrder = state.fcShuffled ? shuffle(order) : order;
+  const total = state.words.length;
+  if(!state.flashRangeEnd || state.flashRangeEnd > total) state.flashRangeEnd = total;
+  if(!state.flashRangeStart || state.flashRangeStart < 1) state.flashRangeStart = 1;
+  if(state.flashRangeStart > state.flashRangeEnd) state.flashRangeStart = 1;
+  const startIdx = state.flashRangeStart - 1;
+  const endIdx = state.flashRangeEnd;
+  const ids = state.words.slice(startIdx, endIdx).map(w=>w.id);
+  state.fcOrder = state.fcShuffled ? shuffle(ids) : ids;
   state.fcIndex = 0;
   state.fcFlipped = false;
 }
@@ -479,11 +523,20 @@ function renderFlash(){
   const id = state.fcOrder[state.fcIndex];
   const w = findWordById(id);
   if(!w) return `<div class="card"><div class="empty">단어를 찾을 수 없습니다.</div></div>`;
+  const total = state.words.length;
   return `
     <div class="card">
+      <div class="row" style="margin-bottom:10px;align-items:center">
+        <span class="tiny">범위</span>
+        <input type="text" inputmode="numeric" id="flashStart" value="${state.flashRangeStart}" style="width:60px;padding:6px 8px;font-size:13px">
+        <span class="tiny">~</span>
+        <input type="text" inputmode="numeric" id="flashEnd" value="${state.flashRangeEnd}" style="width:60px;padding:6px 8px;font-size:13px">
+        <span class="tiny">/ 전체 ${total}</span>
+        <button class="btn ghost" id="applyFlashRange" style="padding:6px 12px;font-size:12px">적용</button>
+      </div>
       <div class="row between">
         <label class="opt"><input type="checkbox" id="fcShuffle" ${state.fcShuffled?'checked':''}> 랜덤 순서</label>
-        <span class="progress">${state.fcIndex+1} / ${state.fcOrder.length}</span>
+        <span class="progress">${numberOf(id)}번 · ${state.fcIndex+1} / ${state.fcOrder.length}</span>
       </div>
       <div class="flash-stage">
         <div class="flash-card" id="flashCard">
@@ -508,10 +561,11 @@ function renderFlash(){
 }
 
 /* ---------- 시험 ---------- */
-function startQuiz(mode){
-  let pool = mode==='wrong'
-    ? state.wrongIds.slice()
-    : state.words.map(w=>w.id);
+function startQuiz(mode, customPool){
+  let pool;
+  if(mode==='wrong') pool = state.wrongIds.slice();
+  else if(mode==='range') pool = (customPool||[]).slice();
+  else pool = state.words.map(w=>w.id);
   pool = shuffle(pool);
   if(pool.length===0){
     state.quizSessionOver = true;
@@ -549,15 +603,26 @@ function renderQuiz(){
   if(state.quizSessionOver){
     const hasWrong = state.wrongIds.length>0;
     const finished = state.quizPool.length>0 && state.quizIndex>=state.quizPool.length;
+    const total = state.words.length;
+    if(!state.quizRangeEnd || state.quizRangeEnd > total) state.quizRangeEnd = total;
+    if(!state.quizRangeStart || state.quizRangeStart < 1) state.quizRangeStart = 1;
     return `
       <div class="card">
         <h2>시험 모드 선택</h2>
         ${finished ? `
-          <p class="desc">결과: <span class="score-badge">${state.quizScoreRight} / ${state.quizTotal} 맞음</span></p>
+          <p class="desc">결과${state.quizRangeLabel?` (${state.quizRangeLabel})`:''}: <span class="score-badge">${state.quizScoreRight} / ${state.quizTotal} 맞음</span></p>
         ` : ''}
-        <div class="row">
+        <div class="row" style="margin-bottom:14px">
           <button class="btn" id="quizStartAll">전체 단어로 시험</button>
           <button class="btn secondary" id="quizStartWrong" ${hasWrong?'':'disabled'}>오답만 다시 풀기 (${state.wrongIds.length})</button>
+        </div>
+        <div class="row" style="align-items:center;border-top:1px solid var(--line);padding-top:14px">
+          <span class="tiny">범위 지정</span>
+          <input type="text" inputmode="numeric" id="quizStart" value="${state.quizRangeStart}" style="width:60px;padding:6px 8px;font-size:13px">
+          <span class="tiny">~</span>
+          <input type="text" inputmode="numeric" id="quizEnd" value="${state.quizRangeEnd}" style="width:60px;padding:6px 8px;font-size:13px">
+          <span class="tiny">/ 전체 ${total}</span>
+          <button class="btn secondary" id="quizStartRange">이 범위로 시험</button>
         </div>
       </div>
     `;
@@ -578,7 +643,7 @@ function renderQuiz(){
   return `
     <div class="card">
       <div class="row between">
-        <span class="tiny">${state.quizMode==='wrong'?'오답 복습':'전체 시험'}</span>
+        <span class="tiny">${state.quizMode==='wrong'?'오답 복습':state.quizMode==='range'?('범위 시험 '+state.quizRangeLabel):'전체 시험'}</span>
         <span class="progress">${state.quizIndex+1} / ${state.quizTotal} · 맞음 ${state.quizScoreRight}</span>
       </div>
       <div class="quiz-hanzi">${w.hanzi}</div>
@@ -728,6 +793,21 @@ function attachHandlers(){
   };
 
   // flashcard
+  const continueStudy = document.getElementById('continueStudy');
+  if(continueStudy) continueStudy.onclick = ()=>{
+    state.flashRangeStart = (state.progress.flashLast||0)+1;
+    state.flashRangeEnd = state.words.length;
+    goTo('flash');
+  };
+  const applyFlashRange = document.getElementById('applyFlashRange');
+  if(applyFlashRange) applyFlashRange.onclick = ()=>{
+    const s = parseInt(document.getElementById('flashStart').value, 10);
+    const e = parseInt(document.getElementById('flashEnd').value, 10);
+    state.flashRangeStart = isNaN(s) ? 1 : s;
+    state.flashRangeEnd = isNaN(e) ? state.words.length : e;
+    setupFlash();
+    render();
+  };
   const fcCard = document.getElementById('flashCard');
   if(fcCard) fcCard.onclick = ()=>{ state.fcFlipped = !state.fcFlipped; render(); };
   const fcFlip = document.getElementById('fcFlip');
@@ -740,6 +820,8 @@ function attachHandlers(){
   };
   const fcNext = document.getElementById('fcNext');
   if(fcNext) fcNext.onclick = ()=>{
+    const currentId = state.fcOrder[state.fcIndex];
+    markStudied(currentId);
     state.fcIndex = (state.fcIndex+1)%state.fcOrder.length;
     state.fcFlipped = false;
     render();
@@ -756,6 +838,20 @@ function attachHandlers(){
   if(quizStartAll) quizStartAll.onclick = ()=> startQuiz('all');
   const quizStartWrong = document.getElementById('quizStartWrong');
   if(quizStartWrong) quizStartWrong.onclick = ()=> startQuiz('wrong');
+  const quizStartRange = document.getElementById('quizStartRange');
+  if(quizStartRange) quizStartRange.onclick = ()=>{
+    const total = state.words.length;
+    let s = parseInt(document.getElementById('quizStart').value, 10);
+    let e = parseInt(document.getElementById('quizEnd').value, 10);
+    if(isNaN(s) || s<1) s = 1;
+    if(isNaN(e) || e>total) e = total;
+    if(s>e) s = 1;
+    state.quizRangeStart = s;
+    state.quizRangeEnd = e;
+    state.quizRangeLabel = `${s}~${e}번`;
+    const ids = state.words.slice(s-1, e).map(w=>w.id);
+    startQuiz('range', ids);
+  };
 
   const pinyinInput = document.getElementById('pinyinInput');
   if(pinyinInput) pinyinInput.oninput = (e)=>{ state.quizPinyinInput = e.target.value; };
