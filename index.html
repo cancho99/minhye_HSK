@@ -328,14 +328,10 @@ function stripTones(py){
   return py.toLowerCase().split('').map(c=>map[c]||c).join('').replace(/[^a-z]/g,'');
 }
 function normalizePinyin(py){
-  const map = {'ā':'a','á':'a','ǎ':'a','à':'a','ē':'e','é':'e','ě':'e','è':'e',
-    'ī':'i','í':'i','ǐ':'i','ì':'i','ō':'o','ó':'o','ǒ':'o','ò':'o',
-    'ū':'u','ú':'u','ǔ':'u','ù':'u','ǖ':'v','ǘ':'v','ǚ':'v','ǜ':'v','ü':'v',
-    'Ā':'A','Á':'A','Ǎ':'A','À':'A','Ē':'E','É':'E','Ě':'E','È':'E',
-    'Ī':'I','Í':'I','Ǐ':'I','Ì':'I','Ō':'O','Ó':'O','Ǒ':'O','Ò':'O',
-    'Ū':'U','Ú':'U','Ǔ':'U','Ù':'U','Ǖ':'V','Ǘ':'V','Ǚ':'V','Ǜ':'V','Ü':'V'};
-  let out = py.split('').map(c=>map[c]||c).join('');
-  out = out.replace(/['’‘`]/g, '');
+  // 성조는 그대로 두고, 괄호·꺾쇠·물결표 등 병음에 불필요한 기호만 제거
+  let out = py.replace(/…/g, ' ');
+  out = out.replace(/[()\[\]{}<>,~·:;!?"“”‘`]/g, '');
+  out = out.replace(/\s+/g, ' ').trim();
   return out;
 }
 function comparePinyin(input, correct){
@@ -499,7 +495,7 @@ function renderManage(){
       <div class="row between">
         <h2 style="margin:0">단어 목록 (${state.words.length})</h2>
         <div class="row" style="gap:6px">
-          ${state.words.length>0?`<button class="btn ghost" id="btnCleanPinyin" style="padding:6px 12px;font-size:12px">병음 특수문자 일괄 제거</button>`:''}
+          ${state.words.length>0?`<button class="btn ghost" id="btnCleanPinyin" style="padding:6px 12px;font-size:12px">병음 기호 정리 (성조 유지)</button>`:''}
           ${state.words.length>0? (
           state.confirmingClear
           ? `<span class="row" style="gap:6px">
@@ -869,7 +865,7 @@ function attachHandlers(){
       if(cleaned !== w.pinyin){ w.pinyin = cleaned; changed++; }
     });
     saveWords();
-    state.pinyinCleanMessage = `${changed}개 단어의 병음에서 성조·특수문자를 제거했어요.`;
+    state.pinyinCleanMessage = `${changed}개 단어의 병음에서 괄호·기호를 정리했어요 (성조는 그대로 유지).`;
     render();
     setTimeout(()=>{ state.pinyinCleanMessage=''; render(); }, 3000);
   };
