@@ -200,6 +200,7 @@ let state = {
   quizRangeStart: 1,
   quizRangeEnd: null,
   quizRangeLabel: '',
+  flashFilter: 'range', // 'range' | 'important'
 };
 
 async function loadAll(){
@@ -376,6 +377,7 @@ function render(){
     ['flash','플래시카드'],
     ['quiz','시험보기'],
     ['wrong','오답노트'],
+    ['important','중요 단어'],
     ['home','홈'],
     ['import','단어 가져오기'],
     ['manage','단어장 관리'],
@@ -395,13 +397,14 @@ function render(){
   else if(state.screen==='flash') s.innerHTML = renderFlash();
   else if(state.screen==='quiz') s.innerHTML = renderQuiz();
   else if(state.screen==='wrong') s.innerHTML = renderWrong();
+  else if(state.screen==='important') s.innerHTML = renderImportant();
 
   attachHandlers();
 }
 
 function goTo(key){
   state.screen = key;
-  if(key==='flash') setupFlash();
+  if(key==='flash'){ state.flashFilter='range'; setupFlash(); }
   if(key==='quiz'){ state.quizSessionOver = true; } // 모드 선택 화면부터
   render();
 }
@@ -511,6 +514,13 @@ function escapeAttr(s){ return (s||'').replace(/"/g,'&quot;'); }
 
 /* ---------- 플래시카드 ---------- */
 function setupFlash(){
+  if(state.flashFilter === 'important'){
+    const ids = state.words.filter(w=>w.important).map(w=>w.id);
+    state.fcOrder = state.fcShuffled ? shuffle(ids) : ids;
+    state.fcIndex = 0;
+    state.fcFlipped = false;
+    return;
+  }
   const total = state.words.length;
   if(!state.flashRangeEnd || state.flashRangeEnd > total) state.flashRangeEnd = total;
   if(!state.flashRangeStart || state.flashRangeStart < 1) state.flashRangeStart = 1;
@@ -526,6 +536,17 @@ function renderFlash(){
   if(state.words.length===0){
     return `<div class="card"><div class="empty">단어를 먼저 등록해 주세요.</div></div>`;
   }
+  if(state.flashFilter==='important' && state.fcOrder.length===0 && state.words.filter(w=>w.important).length===0){
+    return `
+      <div class="card">
+        <div class="row between" style="margin-bottom:10px">
+          <span class="tiny">⭐ 중요 단어만 보는 중</span>
+          <button class="btn ghost" id="exitImportantFlash" style="padding:6px 12px;font-size:12px">범위 모드로 전환</button>
+        </div>
+        <div class="empty">아직 중요 표시한 단어가 없어요. 별표(☆)를 눌러 추가해보세요.</div>
+      </div>
+    `;
+  }
   if(state.fcOrder.length===0) setupFlash();
   const id = state.fcOrder[state.fcIndex];
   const w = findWordById(id);
@@ -533,6 +554,12 @@ function renderFlash(){
   const total = state.words.length;
   return `
     <div class="card">
+      ${state.flashFilter==='important' ? `
+        <div class="row between" style="margin-bottom:10px">
+          <span class="tiny">⭐ 중요 단어만 보는 중 (${state.fcOrder.length}개)</span>
+          <button class="btn ghost" id="exitImportantFlash" style="padding:6px 12px;font-size:12px">범위 모드로 전환</button>
+        </div>
+      ` : `
       <div class="row" style="margin-bottom:10px;align-items:center">
         <span class="tiny">범위</span>
         <input type="text" inputmode="numeric" id="flashStart" value="${state.flashRangeStart}" style="width:60px;padding:6px 8px;font-size:13px">
@@ -541,6 +568,7 @@ function renderFlash(){
         <span class="tiny">/ 전체 ${total}</span>
         <button class="btn ghost" id="applyFlashRange" style="padding:6px 12px;font-size:12px">적용</button>
       </div>
+      `}
       <div class="row between">
         <label class="opt"><input type="checkbox" id="fcShuffle" ${state.fcShuffled?'checked':''}> 랜덤 순서</label>
         <span class="progress">${numberOf(id)}번 · ${state.fcIndex+1} / ${state.fcOrder.length}</span>
@@ -572,6 +600,7 @@ function renderFlash(){
 function startQuiz(mode, customPool){
   let pool;
   if(mode==='wrong') pool = state.wrongIds.slice();
+  else if(mode==='important') pool = state.words.filter(w=>w.important).map(w=>w.id);
   else if(mode==='range') pool = (customPool||[]).slice();
   else pool = state.words.map(w=>w.id);
   pool = shuffle(pool);
@@ -610,6 +639,7 @@ function renderQuiz(){
   }
   if(state.quizSessionOver){
     const hasWrong = state.wrongIds.length>0;
+    const hasImportant = state.words.filter(w=>w.important).length>0;
     const finished = state.quizPool.length>0 && state.quizIndex>=state.quizPool.length;
     const total = state.words.length;
     if(!state.quizRangeEnd || state.quizRangeEnd > total) state.quizRangeEnd = total;
@@ -623,6 +653,7 @@ function renderQuiz(){
         <div class="row" style="margin-bottom:14px">
           <button class="btn" id="quizStartAll">전체 단어로 시험</button>
           <button class="btn secondary" id="quizStartWrong" ${hasWrong?'':'disabled'}>오답만 다시 풀기 (${state.wrongIds.length})</button>
+          <button class="btn secondary" id="quizStartImportant" ${hasImportant?'':'disabled'}>⭐ 중요 단어만 시험 (${state.words.filter(w=>w.important).length})</button>
         </div>
         <div class="row" style="align-items:center;border-top:1px solid var(--line);padding-top:14px">
           <span class="tiny">범위 지정</span>
@@ -650,7 +681,7 @@ function renderQuiz(){
   return `
     <div class="card">
       <div class="row between">
-        <span class="tiny">${state.quizMode==='wrong'?'오답 복습':state.quizMode==='range'?('범위 시험 '+state.quizRangeLabel):'전체 시험'}</span>
+        <span class="tiny">${state.quizMode==='wrong'?'오답 복습':state.quizMode==='important'?'⭐ 중요 단어':state.quizMode==='range'?('범위 시험 '+state.quizRangeLabel):'전체 시험'}</span>
         <span class="progress">${state.quizIndex+1} / ${state.quizTotal} · 맞음 ${state.quizScoreRight}</span>
       </div>
       <div class="row between" style="align-items:flex-start">
@@ -711,6 +742,33 @@ function renderWrong(){
       <div class="row between">
         <h2 style="margin:0">오답노트 (${state.wrongIds.length})</h2>
         <button class="btn" id="reviewWrong">오답만 다시 풀기</button>
+      </div>
+      ${items}
+    </div>
+  `;
+}
+
+/* ---------- 중요 단어 ---------- */
+function renderImportant(){
+  const importantWords = state.words.filter(w=>w.important);
+  if(importantWords.length===0){
+    return `<div class="card"><div class="empty">아직 중요 표시한 단어가 없어요. 플래시카드나 시험 화면에서 ☆을 눌러 추가해보세요.</div></div>`;
+  }
+  const items = importantWords.map(w=>`
+    <div class="wrong-item">
+      <div class="wrong-hanzi">${w.hanzi}</div>
+      <div class="wrong-meta"><span class="py">${w.pinyin}</span><br><span class="mn">${w.meaning}</span></div>
+      <button class="btn ghost unstar-important" data-id="${w.id}" style="padding:4px 8px;font-size:12px">해제</button>
+    </div>
+  `).join('');
+  return `
+    <div class="card">
+      <div class="row between">
+        <h2 style="margin:0">⭐ 중요 단어 (${importantWords.length})</h2>
+      </div>
+      <div class="row" style="margin:10px 0 14px">
+        <button class="btn" id="studyImportant">이 단어들로 플래시카드</button>
+        <button class="btn secondary" id="quizImportant">이 단어들로 시험보기</button>
       </div>
       ${items}
     </div>
@@ -821,6 +879,12 @@ function attachHandlers(){
     setupFlash();
     render();
   };
+  const exitImportantFlash = document.getElementById('exitImportantFlash');
+  if(exitImportantFlash) exitImportantFlash.onclick = ()=>{
+    state.flashFilter = 'range';
+    setupFlash();
+    render();
+  };
   const fcCard = document.getElementById('flashCard');
   if(fcCard) fcCard.onclick = ()=>{ state.fcFlipped = !state.fcFlipped; render(); };
   const fcStar = document.getElementById('fcStar');
@@ -853,6 +917,8 @@ function attachHandlers(){
   if(quizStartAll) quizStartAll.onclick = ()=> startQuiz('all');
   const quizStartWrong = document.getElementById('quizStartWrong');
   if(quizStartWrong) quizStartWrong.onclick = ()=> startQuiz('wrong');
+  const quizStartImportant = document.getElementById('quizStartImportant');
+  if(quizStartImportant) quizStartImportant.onclick = ()=> startQuiz('important');
   const quizStartRange = document.getElementById('quizStartRange');
   if(quizStartRange) quizStartRange.onclick = ()=>{
     const total = state.words.length;
@@ -925,6 +991,23 @@ function attachHandlers(){
     state.quizSessionOver = true;
     render();
   };
+
+  // important words
+  const studyImportant = document.getElementById('studyImportant');
+  if(studyImportant) studyImportant.onclick = ()=>{
+    state.flashFilter = 'important';
+    state.screen = 'flash';
+    setupFlash();
+    render();
+  };
+  const quizImportant = document.getElementById('quizImportant');
+  if(quizImportant) quizImportant.onclick = ()=>{
+    state.screen = 'quiz';
+    startQuiz('important');
+  };
+  document.querySelectorAll('.unstar-important').forEach(btn=>{
+    btn.onclick = ()=> toggleImportant(Number(btn.getAttribute('data-id')));
+  });
 
   // wrong list
   const reviewWrong = document.getElementById('reviewWrong');
